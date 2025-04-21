@@ -1,24 +1,21 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using DynamicConfig.Library.Context;
 using DynamicConfig.Library.Entities;
 using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
-using Xunit;
+using MongoDB.Driver;
+using Moq;
 
 public class ConfigApiTests
 {
-    private MongoDbContext CreateInMemoryDbContext()
+    private Mock<IMongoCollection<ConfigurationItem>> CreateMockCollection()
     {
-        var options = new DbContextOptionsBuilder<MongoDbContext>()
-            .UseInMemoryDatabase(databaseName: $"TestDb_{Guid.NewGuid()}")
-            .Options;
+        var mockCollection = new Mock<IMongoCollection<ConfigurationItem>>();
+        var mockCursor = new Mock<IAsyncCursor<ConfigurationItem>>();
 
-        var context = new MongoDbContext(options);
-
-        context.ConfigurationItems.AddRange(
+        var configItems = new[]
+        {
             new ConfigurationItem
             {
                 Name = "SiteName",
@@ -42,24 +39,48 @@ public class ConfigApiTests
                 Value = "50",
                 IsActive = false,
                 ApplicationName = "SERVICE-A"
-            });
+            }
+        };
 
-        context.SaveChanges();
-        return context;
+        mockCursor.SetupSequence(cursor => cursor.MoveNextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true)  // Ýlk çaðrýda MoveNextAsync true dönsün
+            .ReturnsAsync(false); // Ýkinci çaðrýda false dönsün (bitti)
+
+        mockCursor.SetupGet(cursor => cursor.Current).Returns(configItems.AsQueryable());
+
+        mockCollection.Setup(collection => collection.FindAsync(
+            It.IsAny<FilterDefinition<ConfigurationItem>>(),
+            It.IsAny<FindOptions<ConfigurationItem>>(),
+            It.IsAny<CancellationToken>()
+        )).ReturnsAsync(mockCursor.Object);
+
+        return mockCollection;
+    }
+
+    private Mock<MongoDbContext> CreateMockDbContext()
+    {
+        var mockCollection = CreateMockCollection();
+
+        var mockDatabase = new Mock<IMongoDatabase>();
+        mockDatabase.Setup(db => db.GetCollection<ConfigurationItem>("ConfigurationItems", null))
+            .Returns(mockCollection.Object);
+
+        var mockContext = new Mock<MongoDbContext>(mockDatabase.Object);
+        return mockContext;
     }
 
     [Fact(DisplayName = "SERVICE-A için yalnýzca aktif kayýtlar dönmeli")]
     public async Task GetActiveConfigurations_ShouldReturnOnlyActive_ForSpecificApplication()
     {
-        // Arrange
-        using var context = CreateInMemoryDbContext();
+        var mockContext = CreateMockDbContext();
+        var context = mockContext.Object;
 
-        // Act
+        var filter = Builders<ConfigurationItem>.Filter.Eq(c => c.ApplicationName, "SERVICE-A") &
+                     Builders<ConfigurationItem>.Filter.Eq(c => c.IsActive, true);
         var activeConfigs = await context.ConfigurationItems
-            .Where(c => c.ApplicationName == "SERVICE-A" && c.IsActive)
+            .Find(filter)
             .ToListAsync();
 
-        // Assert
         activeConfigs.Should().HaveCount(1, "çünkü sadece bir kayýt aktif");
         activeConfigs[0].Name.Should().Be("SiteName");
         activeConfigs[0].Value.Should().Be("soty.io");
@@ -69,10 +90,13 @@ public class ConfigApiTests
     [Fact(DisplayName = "SERVICE-B için kayýtlar doðru dönmeli")]
     public async Task GetConfigurations_For_ServiceB_ShouldReturnExpectedValues()
     {
-        using var context = CreateInMemoryDbContext();
+        var mockContext = CreateMockDbContext();
+        var context = mockContext.Object;
 
+        var filter = Builders<ConfigurationItem>.Filter.Eq(c => c.ApplicationName, "SERVICE-B") &
+                     Builders<ConfigurationItem>.Filter.Eq(c => c.IsActive, true);
         var configs = await context.ConfigurationItems
-            .Where(c => c.ApplicationName == "SERVICE-B" && c.IsActive)
+            .Find(filter)
             .ToListAsync();
 
         configs.Should().ContainSingle()
@@ -82,10 +106,12 @@ public class ConfigApiTests
     [Fact(DisplayName = "Aktif olmayan kayýtlar filtrelenmeli")]
     public async Task InactiveConfigurations_ShouldBeExcluded()
     {
-        using var context = CreateInMemoryDbContext();
+        var mockContext = CreateMockDbContext();
+        var context = mockContext.Object;
 
+        var filter = Builders<ConfigurationItem>.Filter.Eq(c => c.IsActive, true);
         var allActive = await context.ConfigurationItems
-            .Where(c => c.IsActive)
+            .Find(filter)
             .ToListAsync();
 
         allActive.Should().NotContain(c => c.Name == "MaxItemCount");
