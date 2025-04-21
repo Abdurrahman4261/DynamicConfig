@@ -43,8 +43,8 @@ public class ConfigApiTests
         };
 
         mockCursor.SetupSequence(cursor => cursor.MoveNextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true)  // Ýlk çaðrýda MoveNextAsync true dönsün
-            .ReturnsAsync(false); // Ýkinci çaðrýda false dönsün (bitti)
+            .ReturnsAsync(true)  
+            .ReturnsAsync(false); 
 
         mockCursor.SetupGet(cursor => cursor.Current).Returns(configItems.AsQueryable());
 
