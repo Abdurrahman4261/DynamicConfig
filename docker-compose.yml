@@ -1,0 +1,31 @@
+version: '3.4'
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: mssql
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=Abd2003.
+    ports:
+      - "1433:1433"
+    networks:
+      - config-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dynamicconfig-api
+    ports:
+      - "5000:8080"
+    depends_on:
+      - sqlserver
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=ConfigDb;User=sa;Password=Abd2003.;TrustServerCertificate=True;"
+    networks:
+      - config-network
+
+networks:
+  config-network:
+    driver: bridge
